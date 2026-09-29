@@ -45,10 +45,28 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(install)
     //
     // Old Architecture (legacy bridge present): install using the bridge
     // runtime so this keeps working for non-bridgeless apps.
+    //
+    // RCTCxxBridge (and its `runtime` accessor) was removed from public headers
+    // in RN 0.87+ bridgeless-only builds. Rather than statically redeclaring the
+    // selector via a category (which could clash with the real declaration still
+    // present on older RN versions where the header IS importable), dispatch to
+    // it dynamically with NSInvocation. This compiles identically regardless of
+    // which RN version's headers are available, and safely no-ops when the
+    // bridge doesn't implement `runtime` at all (bridgeless mode on 0.87+, where
+    // [RCTBridge currentBridge] is nil anyway).
     RCTBridge* bridge = [RCTBridge currentBridge];
-    RCTCxxBridge* cxxBridge = (RCTCxxBridge*)bridge;
-    if (cxxBridge != nil) {
-        jsi::Runtime* jsiRuntime = (jsi::Runtime*) cxxBridge.runtime;
+    SEL runtimeSelector = NSSelectorFromString(@"runtime");
+    if (bridge != nil && [bridge respondsToSelector:runtimeSelector]) {
+        NSMethodSignature *signature = [bridge methodSignatureForSelector:runtimeSelector];
+        NSInvocation *invocation = [NSInvocation invocationWithMethodSignature:signature];
+        invocation.selector = runtimeSelector;
+        invocation.target = bridge;
+        [invocation invoke];
+
+        void *runtimePtr = NULL;
+        [invocation getReturnValue:&runtimePtr];
+
+        jsi::Runtime* jsiRuntime = (jsi::Runtime*) runtimePtr;
         if (jsiRuntime != nil) {
             askarTurboModuleUtility::registerTurboModule(*jsiRuntime, bridge.jsCallInvoker);
         }
